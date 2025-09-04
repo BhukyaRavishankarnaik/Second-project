@@ -125,11 +125,11 @@ document.getElementById("loginForm").addEventListener("submit", function(e){
   const user = document.getElementById("username").value;
   const pass = document.getElementById("password").value;
 
-  if(role==="admin" && user==="admin" && pass==="1234") {
+  if(role==="admin" && user==="Teacher" && pass==="1234") {
     localStorage.setItem("isLoggedIn","admin");
     showAdmin();
   }
-  else if(role==="student" && user==="student" && pass==="1111") {
+  else if(role==="student" && user==="student" && pass==="0321") {
     localStorage.setItem("isLoggedIn","student");
     showStudent();
   }
