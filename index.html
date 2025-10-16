@@ -17,6 +17,8 @@
   table { width:100%; border-collapse:collapse; margin-top:20px; }
   th, td { border:1px solid #ddd; padding:8px; text-align:center; }
   .actions { margin-top:15px; display:flex; gap:10px; flex-wrap:wrap; }
+  .error { color:#c62828; font-size:12px; margin-top:2px; }
+  .invalid { border-color:#c62828; outline:none; }
 </style>
 </head>
 <body>
@@ -79,9 +81,16 @@
 
     <button id="markBtn" class="btn">Mark / Update</button>
 
+    <div class="row">
+      <div style="flex:1;">
+        <label for="search">Live Search</label><br>
+        <input type="text" id="search" placeholder="Search by roll, status, date or time">
+      </div>
+    </div>
+
     <table id="attendanceTable">
       <thead>
-        <tr><th>Date</th><th>Time</th><th>Roll</th><th>Status</th></tr>
+        <tr><th>Date</th><th>Time</th><th>Roll</th><th>Status</th><th>Actions</th></tr>
       </thead>
       <tbody></tbody>
     </table>
@@ -91,7 +100,19 @@
       <button onclick="window.print()" class="btn">Print</button>
       <!-- Admin-only Clear Data -->
       <button id="clearAll" style="background:orange; color:white;">Clear All Data</button>
+      <button id="toggleImport" class="btn">Import JSON</button>
       <button id="logoutAdmin" style="background:red; color:white;">Logout</button>
+    </div>
+
+    <div id="importSection" class="hidden">
+      <p>Paste JSON array of records with keys: date, time, roll, status.</p>
+      <textarea id="jsonInput" rows="8" style="width:100%; padding:10px; border:1px solid #ccc; border-radius:6px;" placeholder='[
+  { "date": "2025-10-16", "time": "09:15:00", "roll": "22E41A0401", "status": "Present" }
+]'></textarea>
+      <div class="actions">
+        <button id="importReplace" class="btn">Load (Replace)</button>
+        <button id="importMerge" class="btn">Merge (No Duplicates)</button>
+      </div>
     </div>
   </div>
 
@@ -109,6 +130,10 @@ const loginBox = document.getElementById("loginBox");
 const adminBox = document.getElementById("adminBox");
 const studentBox = document.getElementById("studentBox");
 const tableBody = document.querySelector("#attendanceTable tbody");
+const searchInput = document.getElementById("search");
+const importSection = document.getElementById("importSection");
+const toggleImportBtn = document.getElementById("toggleImport");
+let searchQuery = "";
 
 function updateDateTime() {
   let now = new Date();
@@ -157,7 +182,14 @@ document.getElementById("markBtn").addEventListener("click", ()=>{
   const roll = document.getElementById("studentRoll").value;
   const status = document.getElementById("status").value;
 
-  if(!roll) return alert("Select student roll number!");
+  // realtime visual validation
+  const rollSelect = document.getElementById("studentRoll");
+  if(!roll){
+    rollSelect.classList.add("invalid");
+    return alert("Select student roll number!");
+  } else {
+    rollSelect.classList.remove("invalid");
+  }
   let data = JSON.parse(localStorage.getItem("attendance")||"[]");
 
   if(data.length>=30) return alert("⚠️ Attendance is limited to 30 students!");
@@ -168,11 +200,39 @@ document.getElementById("markBtn").addEventListener("click", ()=>{
   loadAttendance();
 });
 
+function normalize(str){ return (str||"").toString().toLowerCase(); }
+
 function loadAttendance() {
   tableBody.innerHTML="";
   let data = JSON.parse(localStorage.getItem("attendance")||"[]");
-  data.forEach(r=>{
-    tableBody.innerHTML+=`<tr><td>${r.date}</td><td>${r.time}</td><td>${r.roll}</td><td>${r.status}</td></tr>`;
+  let q = normalize(searchQuery);
+  data
+    .filter(r=>{
+      if(!q) return true;
+      return normalize(r.date).includes(q) || normalize(r.time).includes(q) || normalize(r.roll).includes(q) || normalize(r.status).includes(q);
+    })
+    .forEach(r=>{
+      tableBody.innerHTML+=`<tr><td>${r.date}</td><td>${r.time}</td><td>${r.roll}</td><td>${r.status}</td><td><button class="deleteRow" data-roll="${r.roll}">Delete</button></td></tr>`;
+    });
+}
+
+// delegate delete button
+document.getElementById("attendanceTable").addEventListener("click", (e)=>{
+  const btn = e.target;
+  if(btn && btn.classList.contains("deleteRow")){
+    const roll = btn.getAttribute("data-roll");
+    let data = JSON.parse(localStorage.getItem("attendance")||"[]");
+    data = data.filter(r=>r.roll!==roll);
+    localStorage.setItem("attendance", JSON.stringify(data));
+    loadAttendance();
+  }
+});
+
+// live search
+if(searchInput){
+  searchInput.addEventListener("input", ()=>{
+    searchQuery = searchInput.value || "";
+    loadAttendance();
   });
 }
 
@@ -195,6 +255,65 @@ document.getElementById("exportCSV").addEventListener("click", ()=>{
   link.download="attendance.csv";
   link.click();
 });
+
+// toggle import section
+if(toggleImportBtn){
+  toggleImportBtn.addEventListener("click", ()=>{
+    importSection.classList.toggle("hidden");
+  });
+}
+
+function isValidRecord(obj){
+  return obj && typeof obj==="object" && ["date","time","roll","status"].every(k=>k in obj);
+}
+
+function sanitizeRecords(list){
+  return list.map(r=>({
+    date: String(r.date||"").slice(0,10),
+    time: String(r.time||""),
+    roll: String(r.roll||""),
+    status: String(r.status||"")
+  }));
+}
+
+const jsonInput = document.getElementById("jsonInput");
+const importReplace = document.getElementById("importReplace");
+const importMerge = document.getElementById("importMerge");
+
+function parseInput(){
+  try{
+    const val = JSON.parse(jsonInput.value||"[]");
+    if(!Array.isArray(val)) throw new Error("JSON must be an array");
+    if(!val.every(isValidRecord)) throw new Error("Missing required keys in some records");
+    return sanitizeRecords(val);
+  }catch(err){
+    alert("❌ Invalid JSON: "+err.message);
+    return null;
+  }
+}
+
+if(importReplace){
+  importReplace.addEventListener("click", ()=>{
+    const list = parseInput();
+    if(!list) return;
+    localStorage.setItem("attendance", JSON.stringify(list));
+    loadAttendance();
+    alert("✅ Attendance replaced from JSON");
+  });
+}
+
+if(importMerge){
+  importMerge.addEventListener("click", ()=>{
+    const list = parseInput();
+    if(!list) return;
+    let data = JSON.parse(localStorage.getItem("attendance")||"[]");
+    const existingRolls = new Set(data.map(r=>r.roll));
+    const merged = data.concat(list.filter(r=>!existingRolls.has(r.roll)));
+    localStorage.setItem("attendance", JSON.stringify(merged));
+    loadAttendance();
+    alert("✅ Merged records (skipped duplicates by roll)");
+  });
+}
 
 // Admin-only Clear Attendance
 document.getElementById("clearAll").addEventListener("click", ()=>{
